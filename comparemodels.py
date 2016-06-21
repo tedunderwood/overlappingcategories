@@ -1,4 +1,4 @@
-# comparemodels.py
+# comparemodels.py  version 1.1
 
 # This script compares two models in order to determine
 # how much more or less accurately they classify the
@@ -6,6 +6,9 @@
 
 # It's only interested in works in the positive class,
 # not works present for contrast.
+
+# This version differs from the version in fiction
+# in that the comparemodels function returns values
 
 import csv, os
 
@@ -86,6 +89,8 @@ def compare_dicts(a, b):
             # record the amount it undershot it. Either way, it's a list of
             # how much the original predictions were "righter than" the
             # deviations.
+        else:
+            print('MISSING: ' + key)
 
     if total > 0:
         apct = acorrect / total
@@ -134,6 +139,7 @@ def compare_untrained(orig, devi):
 
     origdict = get_allvols(orig)
     devidict = get_untrained(devi)
+    print(len(devidict))
 
     total, apct, bpct, meandiff = compare_dicts(origdict, devidict)
     print('\nRESULTS\n-------')
@@ -142,6 +148,8 @@ def compare_untrained(orig, devi):
     print('The original model got ' + str(apct) + ' correct.')
     print('The deviation got ' + str(bpct) + ' correct.')
     print('And the original prediction differed on avg by ' + str(meandiff))
+
+    return total, len(devidict), apct, bpct
 
 if __name__ == '__main__':
     compare_untrained()

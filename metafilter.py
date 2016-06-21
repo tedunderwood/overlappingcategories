@@ -441,8 +441,10 @@ def label_classes(metadict, categorytodivideon, positive_tags, negative_tags, si
         else:
             # if we're dividing classes by date, we obvs don't want to
             # ensure equal distributions over time.
-
-            negatives = random.sample(all_negatives, sizecap)
+            if sizecap < len(all_negatives):
+                negatives = random.sample(all_negatives, sizecap)
+            else:
+                negatives = list(all_negatives)
 
     else:
         negatives = list(all_negatives)

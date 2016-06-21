@@ -350,18 +350,19 @@ def record_trainflags(metadict, donttrainset):
         else:
             metadata['trainflag'] = 1
 
-def make_vocablist(sourcedir, n, vocabpath):
+def make_vocablist(volspresent, n, vocabpath):
     '''
     Makes a list of the top n words in sourcedir, and writes it
     to vocabpath.
     '''
 
-    sourcefiles = [x for x in os.listdir(sourcedir) if not x.startswith('.')]
+    sourcepaths = [x[1] for x in volspresent]
+    # volspresent is a list of id, path 2-tuples created by get_volume_lists
 
     wordcounts = Counter()
 
-    for afile in sourcefiles:
-        path = sourcedir + afile
+    for path in sourcepaths:
+
         with open(path, encoding = 'utf-8') as f:
             for line in f:
                 fields = line.strip().split('\t')
@@ -382,7 +383,7 @@ def make_vocablist(sourcedir, n, vocabpath):
 
     return vocabulary
 
-def get_vocablist(vocabpath, sourcedir, wordcounts, useall, n):
+def get_vocablist(vocabpath, volspresent, wordcounts, useall, n):
     '''
     Gets the vocablist stored in vocabpath or, alternately, if that list
     doesn't yet exist, it creates a vocablist and puts it there.
@@ -392,7 +393,7 @@ def get_vocablist(vocabpath, sourcedir, wordcounts, useall, n):
     ctr = 0
 
     if not os.path.isfile(vocabpath):
-        vocablist = make_vocablist(sourcedir, n, vocabpath)
+        vocablist = make_vocablist(volspresent, n, vocabpath)
     else:
         with open(vocabpath, encoding = 'utf-8') as f:
             reader = csv.DictReader(f)
@@ -492,7 +493,12 @@ def create_model(paths, exclusions, classifyconditions):
     # Now that we have a list of volumes with metadata, we can select the groups of IDs
     # that we actually intend to contrast.
 
-    IDsToUse, classdictionary, donttrainset = metafilter.label_classes(metadict, "tagset", positive_tags, negative_tags, sizecap, datetype, excludeif, testconditions)
+    if type(positive_tags[0]).__name__ == 'int':
+        categorytodivide = 'firstpub'
+    else:
+        categorytodivide = 'tagset'
+
+    IDsToUse, classdictionary, donttrainset = metafilter.label_classes(metadict, categorytodivide, positive_tags, negative_tags, sizecap, datetype, excludeif, testconditions)
 
     print()
     min, max = first_and_last(IDsToUse, metadict, datetype)
@@ -523,7 +529,7 @@ def create_model(paths, exclusions, classifyconditions):
     # The feature list we use is defined by the top 10,000 words (by document
     # frequency) in the whole corpus, and it will be the same for all models.
 
-    vocablist = get_vocablist(vocabpath, sourcefolder, wordcounts, useall = True, n = numfeatures)
+    vocablist = get_vocablist(vocabpath, volspresent, wordcounts, useall = True, n = numfeatures)
 
     # This function either gets the vocabulary list already stored in vocabpath, or
     # creates a list of the top 10k words in all files, and stores it there.
