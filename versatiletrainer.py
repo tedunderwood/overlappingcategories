@@ -148,22 +148,6 @@ def get_features(wordcounts, wordlist):
 
     return wordvec
 
-# In an earlier version of this script, we sometimes used
-# "publication date" as a feature, to see what would happen.
-# In the current version, we don't. Some of the functions
-# and features remain, but they are deprecated. E.g.:
-
-def get_features_with_date(wordcounts, wordlist, date, totalcount):
-    numwords = len(wordlist)
-    wordvec = np.zeros(numwords + 1)
-    for idx, word in enumerate(wordlist):
-        if word in wordcounts:
-            wordvec[idx] = wordcounts[word]
-
-    wordvec = wordvec / (totalcount + 0.0001)
-    wordvec[numwords] = date
-    return wordvec
-
 def sliceframe(dataframe, yvals, excludedrows, testrow):
     numrows = len(dataframe)
     newyvals = list(yvals)
@@ -211,49 +195,6 @@ def normalizearray(featurearray, usedate):
             # We set a small stdev for date.
 
     return featurearray, means, stdevs
-
-def binormal_select(vocablist, positivecounts, negativecounts, totalpos, totalneg, k):
-    ''' A feature-selection option, not currently in use.
-    '''
-    all_scores = np.zeros(len(vocablist))
-
-    for idx, word in enumerate(vocablist):
-        # For each word we create a vector the length of vols in each class
-        # that contains real counts, plus zeroes for all those vols not
-        # represented.
-
-        positives = np.zeros(totalpos, dtype = 'int64')
-        if word in positivecounts:
-            positives[0: len(positivecounts[word])] = positivecounts[word]
-
-        negatives = np.zeros(totalneg, dtype = 'int64')
-        if word in negativecounts:
-            negatives[0: len(negativecounts[word])] = negativecounts[word]
-
-        featuremean = np.mean(np.append(positives, negatives))
-
-        tp = sum(positives > featuremean)
-        fp = sum(positives <= featuremean)
-        tn = sum(negatives > featuremean)
-        fn = sum(negatives <= featuremean)
-        tpr = tp/(tp+fn) # true positive ratio
-        fpr = fp/(fp+tn) # false positive ratio
-
-        bns_score = abs(norm.ppf(tpr) - norm.ppf(fpr))
-        # See Forman
-
-        if np.isinf(bns_score) or np.isnan(bns_score):
-            bns_score = 0
-
-        all_scores[idx] = bns_score
-
-    zipped = [x for x in zip(all_scores, vocablist)]
-    zipped.sort(reverse = True)
-    with open('bnsscores.tsv', mode='w', encoding = 'utf-8') as f:
-        for score, word in zipped:
-            f.write(word + '\t' + str(score) + '\n')
-
-    return [x[1] for x in zipped[0:k]]
 
 def confirm_testconditions(testconditions, positive_tags):
 
@@ -471,6 +412,12 @@ def get_docfrequency(volspresent, donttrainset):
     return wordcounts
 
 def model_call(quintuplets, algorithm):
+    '''
+    Invokes multiprocessing to distribute n-fold crossvalidation
+    simultaneously across multiple threads. Since I'm usually doing tenfold
+    crossvalidation, on a computer with 12 cores, I set ten threads.
+    '''
+
     print('Beginning multiprocessing.')
     pool = Pool(processes = 10)
 
@@ -489,6 +436,10 @@ def model_call(quintuplets, algorithm):
     return resultlist
 
 def crossvalidate(data, classvector, folds, algorithm, regu_const):
+    '''
+    Creates a set of tuples that can be sent to a multiprocessing Pool,
+    one "quintuplet" for each thread.
+    '''
     quintuplets = list()
     foldindices = []
     for fold in folds:
@@ -515,6 +466,9 @@ def crossvalidate(data, classvector, folds, algorithm, regu_const):
     return predictions
 
 def calculate_accuracy(orderedIDs, predictions, classdictionary, donttrainset, verbose):
+    '''
+    What it says on the tin.
+    '''
 
     truepositives = 0
     truenegatives = 0
@@ -565,6 +519,14 @@ def calculate_accuracy(orderedIDs, predictions, classdictionary, donttrainset, v
     return accuracy
 
 def gridsearch(featurestart, featureend, featurestep, c_range, masterdata, orderedIDs, folds, algorithm, classdictionary, classvector, donttrainset):
+    '''
+    Does a grid search cross a range of feature counts and
+    C values. The assumption is that we're always taking the top
+    x words in the vocabulary.
+
+    Note that the matrix will actually display with the "x axis"
+    on the side, and the "y axis" at the bottom. Sorry!
+    '''
 
     xaxis = [x for x in range(featurestart, featureend, featurestep)]
     yaxis = c_range
@@ -598,7 +560,7 @@ def gridsearch(featurestart, featureend, featurestep, c_range, masterdata, order
     features4max = xaxis[coords[0]]
     c4max = yaxis[coords[1]]
 
-    return matrix, features4max, c4max, matrix.argmax()
+    return matrix, features4max, c4max, matrix.max()
 
 def create_folds(k, algorithm, orderedIDs, authormatches):
     '''
@@ -630,10 +592,56 @@ def create_folds(k, algorithm, orderedIDs, authormatches):
 
     return folds
 
+def get_dataframe(metadict, volspresent, classdictionary, vocablist, freqs_already_normalized):
+    '''
+    Given a vocabulary list, and list of volumes, this actually creates the
+    pandas dataframe with volumes as rows and words (or other features) as
+    columns. It also enriches the metadata dictionary with information about
+    total wordcount for each volume.
+    '''
+
+    voldata = list()
+    classvector = list()
+
+    for volid, volpath in volspresent:
+
+        with open(volpath, encoding = 'utf-8') as f:
+            voldict = dict()
+            totalcount = 0
+            for line in f:
+                fields = line.strip().split('\t')
+                if len(fields) > 2 or len(fields) < 2:
+                    continue
+
+                word = fields[0]
+                if fields[1] == 'frequency':
+                    continue
+                count = float(fields[1])
+                voldict[word] = count
+                totalcount += count
+
+        features = get_features(voldict, vocablist)
+        if totalcount == 0:
+            totalcount = .00001
+        if freqs_already_normalized:
+            voldata.append(features)
+        else:
+            voldata.append(features / totalcount)
+
+        metadict[volid]['volsize'] = totalcount
+        classflag = classdictionary[volid]
+        classvector.append(classflag)
+
+    masterdata = pd.DataFrame(voldata)
+
+    return masterdata, classvector, metadict
+
 def get_data_for_model(paths, exclusions, classifyconditions):
-    ''' This is the main function in the module.
-    It can be called externally; it's also called
-    if the module is run directly.
+    ''' Unpacks a bunch of parameters that define metadata
+    conditions for positive and negative classes. Finds volumes
+    meeting those conditions, creates a lexicon if one doesn't
+    already exist, and creates a pandas dataframe storing
+    texts as rows and words/features as columns.
     '''
 
     sourcefolder, extension, metadatapath, outputpath, vocabpath = paths
@@ -650,6 +658,13 @@ def get_data_for_model(paths, exclusions, classifyconditions):
     # out of the training set.
 
     freqs_already_normalized = True
+
+    # By default we assume that frequencies have already been normalized
+    # (divided by the total number of words in the volume). This allows us
+    # to use some features (like type/token ratio) that would become
+    # meaningless if divided by total wordcount. But it means that I'm
+    # offloading some important feature-engineering decisions to the
+    # data prep stage.
 
     # The following function confirms that the testconditions are legal.
 
@@ -796,52 +811,9 @@ def get_data_for_model(paths, exclusions, classifyconditions):
     # back to front, without changing indexes yet to be deleted.
     # This will become important in the modelingprocess module.
 
-    volsizes = dict()
-    voldata = list()
-    classvector = list()
+    masterdata, classvector, metadict = get_dataframe(metadict, volspresent, classdictionary, vocablist, freqs_already_normalized)
 
-    for volid, volpath in volspresent:
-
-        with open(volpath, encoding = 'utf-8') as f:
-            voldict = dict()
-            totalcount = 0
-            for line in f:
-                fields = line.strip().split('\t')
-                if len(fields) > 2 or len(fields) < 2:
-                    continue
-
-                word = fields[0]
-                if fields[1] == 'frequency':
-                    continue
-                count = float(fields[1])
-                voldict[word] = count
-                totalcount += count
-
-        date = metautils.infer_date(metadict[volid], datetype)
-        date = date - 1700
-        if date < 0:
-            date = 0
-
-        if usedate:
-            features = get_features_with_date(voldict, vocablist, date, totalcount)
-            voldata.append(features)
-        else:
-            features = get_features(voldict, vocablist)
-            if totalcount == 0:
-                totalcount = .00001
-            if freqs_already_normalized:
-                voldata.append(features)
-            else:
-                voldata.append(features / totalcount)
-
-
-        volsizes[volid] = totalcount
-        classflag = classdictionary[volid]
-        classvector.append(classflag)
-
-    masterdata = pd.DataFrame(voldata)
-
-    return metadict, masterdata, classvector, classdictionary, orderedIDs, donttrainon, donttrainset, authormatches, vocablist, volsizes
+    return metadict, masterdata, classvector, classdictionary, orderedIDs, donttrainon, donttrainset, authormatches, vocablist
 
 def get_fullmodel(data, classvector, donttrainon, vocablist, regularization):
     '''
@@ -857,7 +829,7 @@ def get_fullmodel(data, classvector, donttrainon, vocablist, regularization):
     stdscaler.fit(trainingset)
     scaledtraining = stdscaler.transform(trainingset)
 
-    newmodel.fit(trainingset, yvals)
+    newmodel.fit(scaledtraining, yvals)
 
     coefficients = newmodel.coef_[0] * 100
 
@@ -866,22 +838,115 @@ def get_fullmodel(data, classvector, donttrainon, vocablist, regularization):
 
     return coefficientuples, newmodel, stdscaler
 
-def export_model(modelitself, scaler, vocabulary, positive_tags, negative_tags, c, n, outpath):
+def export_model(modelitself, algorithm, scaler, vocabulary, positive_tags, negative_tags, c, n, outpath):
+    '''
+    Creates a dictionary with spots for a scikit-learn model and associated data objects that will
+    be needed to apply it to texts. E.g., a vocabulary, which tells you which words occupy which
+    columns, and a StandardScaler object, which stores the means and variances needed to normalize
+    your data (convert frequencies to z scores). Other useful metadata is also stored; the whole
+    dictionary is picked and written to file.
+    '''
     model = dict()
     model['vocabulary'] = vocabulary
     model['itself'] = modelitself
+    model['algorithm'] = algorithm
     model['scaler'] = scaler
     model['positivelabel'] = positive_tags
     model['negativelabel'] = negative_tags
     model['c'] = c
     model['n'] = n
-    model['name'] = outpath.replace('.pkl', '')
+    modelname = outpath.split('/')[-1].replace('.pkl', '')
+    model['name'] = modelname
     with open(outpath, 'wb') as output:
         pickle.dump(model, output)
 
-def tune_a_model(paths, exclusions, classifyconditions, modelparams):
+def apply_pickled_model(amodelpath, folder, extension, metapath):
+    '''
+    Loads a model pickled by the export_model() function above, and applies it to
+    a new folder of texts. Returns a pandas dataframe with a new column for the
+    predictions created by this model. The model name becomes the column name.
+    This allows us to build up a metadata file with columns for the predictions
+    made by multiple models.
+    '''
+    with open(amodelpath, 'rb') as input:
+        modeldict = pickle.load(input)
 
-    metadata, masterdata, classvector, classdictionary, orderedIDs, donttrainon, donttrainset, authormatches, vocablist, volsizes = get_data_for_model(paths, exclusions, classifyconditions)
+    vocablist = modeldict['vocabulary']
+    algorithm = modeldict['algorithm']
+    model = modeldict['itself']
+    scaler = modeldict['scaler']
+    modelname = modeldict['name']
+
+    metadata = pd.read_csv(metapath)
+    metadata = metadata.set_index(['docid'])
+    metadata = metadata[~metadata.index.duplicated(keep='first')]
+
+    volspresent = []
+    classdictionary = dict()
+    metadict = dict()
+    # classdictionary is going to be a dummy parameter where everything is
+    # the same class, since we don't actually need to do any training.
+    # metadict is also a dummy parameter.
+    resultindex = []
+
+    for doc in metadata.index:
+        inpath = os.path.join(folder, doc + extension)
+        if os.path.exists(inpath):
+            volspresent.append( (doc, inpath) )
+            classdictionary[doc] = 0
+            metadict[doc] = dict()
+            resultindex.append(doc)
+        else:
+            print(inpath)
+
+    print(len(volspresent))
+
+    masterdata, classvector, metadict = get_dataframe(metadict, volspresent, classdictionary, vocablist, True)
+    # True, there, means frequencies already normalized to be relative freqs.
+    print(masterdata.shape)
+
+    standarddata = scaler.transform(masterdata)
+    probabilities = [x[1] for x in model.predict_proba(standarddata)]
+
+    # we create a column named for the model
+    probabilities = pd.Series(probabilities, index = resultindex)
+    # we index the results using the volumes we actually found
+
+    metadata[modelname] = probabilities
+    # indexes will automatically align, putting NaN for any vols
+    # not found
+
+    return metadata
+
+def tune_a_model(paths, exclusions, classifyconditions, modelparams):
+    '''
+    This has become the central workhorse class in the module. It takes
+    a set of parameters defining positive and negative subsets of a corpus,
+    and gathers data for those subsets.
+
+    Then it runs a grid search, modeling the texts using a range of parameters
+    defined by modelparams. This involves trying different numbers of features
+    while simultaneously varying C. Logistic regression and SVMs are both
+    supported as options; the constant C has a different meaning in those two
+    algorithms, but the process of tuning parameters is basically analogous.
+
+    After finding the best number of features, and value of C, we run the
+    model again using those parameters, to get predicted probabilities
+    for volumes. Technically, I suppose we could have saved all
+    the predictions from the grid search to avoid this step, but omg, needless
+    complexity.
+
+    We also run the model one last time *without* crossvalidation to get
+    a list of coefficients and a model object that can be saved to be applied
+    to other corpora. For this we invoke get_fullmodel(). We skip crossvalidation
+    here in order to get a single model object that reflects the whole training
+    set.
+
+    We write coefficients, predictions, and model object to file, using variations
+    of the outputpath contained in the "path" tuple.
+    '''
+
+    metadata, masterdata, classvector, classdictionary, orderedIDs, donttrainon, donttrainset, authormatches, vocablist = get_data_for_model(paths, exclusions, classifyconditions)
 
     algorithm, k, featurestart, featureend, featurestep, crange = modelparams
     positive_tags, negative_tags, datetype, numfeatures, regularization, testconditions = classifyconditions
@@ -903,7 +968,7 @@ def tune_a_model(paths, exclusions, classifyconditions, modelparams):
     sourcefolder, extension, metadatapath, outputpath, vocabpath = paths
 
     modelpath = outputpath.replace('.csv', '.pkl')
-    export_model(fullmodel, scaler, vocablist[0 : features4max], positive_tags, negative_tags,best_regularization_coef, len(orderedIDs), modelpath)
+    export_model(fullmodel, algorithm, scaler, vocablist[0 : features4max], positive_tags, negative_tags,best_regularization_coef, len(orderedIDs), modelpath)
 
     coefficientpath = outputpath.replace('.csv', '.coefs.csv')
     with open(coefficientpath, mode = 'w', encoding = 'utf-8') as f:
@@ -928,7 +993,7 @@ def tune_a_model(paths, exclusions, classifyconditions, modelparams):
             nation = thisvolume['nation']
             author = thisvolume['author']
             title = thisvolume['title']
-            allwords = volsizes[volid]
+            allwords = thisvolume['volsize']
             logistic = predictions[volid]
             realclass = classdictionary[volid]
             trainflag = thisvolume['trainflag']
@@ -951,25 +1016,12 @@ def diachronic_tilt(allvolumes, modeltype, datelimits):
     listofrows = list()
     classvector = list()
 
-    # DEPRECATED
-    # if modeltype == 'logistic' and len(datelimits) == 2:
-    #     # In this case we construct a subset of data to model on.
-    #     tomodeldata = list()
-    #     tomodelclasses = list()
-    #     pastthreshold, futurethreshold = datelimits
-
     for volume in allvolumes:
         date = volume[1]
         logistic = volume[8]
         realclass = volume[9]
         listofrows.append([logistic, date])
         classvector.append(realclass)
-
-        # DEPRECATED
-        # if modeltype == 'logistic' and len(datelimits) == 2:
-        #     if date >= pastthreshold and date <= futurethreshold:
-        #         tomodeldata.append([logistic, date])
-        #         tomodelclasses.append(realclass)
 
     y, x = [a for a in zip(*listofrows)]
     plt.axis([min(x) - 2, max(x) + 2, min(y) - 0.02, max(y) + 0.02])
@@ -993,22 +1045,6 @@ def diachronic_tilt(allvolumes, modeltype, datelimits):
         # all this is DEPRECATED
         print("Hey, you're attempting to use the logistic-tilt option")
         print("that we deactivated. Go in and uncomment the code.")
-
-        # if len(datelimits) == 2:
-        #     data = pd.DataFrame(tomodeldata)
-        #     responsevariable = tomodelclasses
-        # else:
-        #     data = pd.DataFrame(listofrows)
-        #     responsevariable = classvector
-
-        # newmodel = LogisticRegression(C = 100000)
-        # newmodel.fit(data, responsevariable)
-        # coefficients = newmodel.coef_[0]
-
-        # intercept = newmodel.intercept_[0] / (-coefficients[0])
-        # slope = coefficients[1] / (-coefficients[0])
-
-        # p = np.poly1d([slope, intercept])
 
     elif modeltype == 'linear':
         # what we actually do
@@ -1120,9 +1156,9 @@ if __name__ == '__main__':
     exclusions = (excludeif, excludeifnot, excludebelow, excludeabove, sizecap)
     classifyconditions = (positive_tags, negative_tags, datetype, numfeatures, regularization, testconditions)
 
-    c_range = [.00008, .0001, .00012, .00013, .00014, .00016, .00018]
+    c_range = [.00008, .0001, .00012, .00013, .00014, .00016]
 
-    modelparams = 'svm', 10, 3600, 3900, 50, c_range
+    modelparams = 'svm', 10, 3700, 3800, 40, c_range
 
     matrix, rawaccuracy, allvolumes, coefficientuples = tune_a_model(paths, exclusions, classifyconditions, modelparams)
 
