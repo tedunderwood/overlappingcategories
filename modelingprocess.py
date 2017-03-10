@@ -1,8 +1,12 @@
+#!/usr/bin/env python3
+
 # modelingprocess.py
 
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
+from sklearn import svm
+from sklearn.preprocessing import StandardScaler
 
 def remove_zerocols(trainingset, testset):
     ''' Remove all columns that sum to zero in the trainingset.
@@ -40,6 +44,19 @@ def sliceframe(dataframe, yvals, excludedrows, testrow):
     # thrown. To avoid this, we remove columns that sum to zero.
 
     trainingset, testset = remove_zerocols(trainingset, testset)
+
+    return trainingset, newyvals, testset
+
+def sliceframe_list(dataframe, yvals, excludedrows):
+    numrows = len(dataframe)
+    newyvals = np.array(yvals)
+    newyvals = np.delete(newyvals, excludedrows)
+
+    trainingset = dataframe.drop(dataframe.index[excludedrows])
+
+    testset = dataframe.iloc[excludedrows]
+
+    # trainingset, testset = remove_zerocols(trainingset, testset)
 
     return trainingset, newyvals, testset
 
@@ -89,3 +106,30 @@ def model_one_volume(data5tuple):
         print(i)
     # print(str(i) + "  -  " + str(len(listtoexclude)))
     return prediction
+
+def model_volume_list(data5tuple):
+    data, classvector, idstomodel, indicestomodel, regularization = data5tuple
+    trainingset, yvals, testset = sliceframe_list(data, classvector, indicestomodel)
+    newmodel = LogisticRegression(C = regularization)
+    trainingset, means, stdevs = normalizearray(trainingset, False)
+    newmodel.fit(trainingset, yvals)
+
+    testset = (testset - means) / stdevs
+    predictions = [x[1] for x in newmodel.predict_proba(testset)]
+
+    return predictions
+
+def svm_model(data5tuple):
+    data, classvector, idstomodel, indicestomodel, regularization = data5tuple
+    trainingset, yvals, testset = sliceframe_list(data, classvector, indicestomodel)
+    trainingset, means, stdevs = normalizearray(trainingset, False)
+
+    supportvector = svm.SVC(C = regularization, kernel = 'linear', probability = True)
+    supportvector.fit(trainingset, yvals)
+
+    testset = (testset - means) / stdevs
+    predictions = supportvector.predict(testset)
+    probabilities = [x[1] for x in supportvector.predict_proba(testset)]
+
+    return probabilities
+
