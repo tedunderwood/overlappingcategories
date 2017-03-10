@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # metafilter.py
 
 # Functions that process metadata for parallel_crossvalidate.py
