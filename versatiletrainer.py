@@ -353,7 +353,7 @@ def make_vocablist(volspresent, n, vocabpath):
 
     return vocabulary
 
-def get_vocablist(vocabpath, volspresent, wordcounts, useall, n):
+def get_vocablist(vocabpath, volspresent, useall, n):
     '''
     Gets the vocablist stored in vocabpath or, alternately, if that list
     doesn't yet exist, it creates a vocablist and puts it there.
@@ -373,8 +373,9 @@ def get_vocablist(vocabpath, volspresent, wordcounts, useall, n):
                     break
                     # this allows us to limit how deep we go
 
-                word = row['word'].strip()
-                if wordcounts[word] > 2 or useall:
+                word = row['word']
+                count = int(row['docfreq'])
+                if count > 1 or useall:
                     vocablist.append(word)
 
         if len(vocablist) > n:
@@ -414,12 +415,12 @@ def get_docfrequency(volspresent, donttrainset):
 def model_call(quintuplets, algorithm):
     '''
     Invokes multiprocessing to distribute n-fold crossvalidation
-    simultaneously across multiple threads. Since I'm usually doing tenfold
-    crossvalidation, on a computer with 12 cores, I set ten threads.
+    simultaneously across multiple threads. Since I'm usually doing this
+    on a computer with 12 cores, I set 12 threads.
     '''
 
     print('Beginning multiprocessing.')
-    pool = Pool(processes = 10)
+    pool = Pool(processes = 12)
 
     if algorithm == 'logistic':
         res = pool.map_async(modelingprocess.model_volume_list, quintuplets)
@@ -562,7 +563,7 @@ def gridsearch(featurestart, featureend, featurestep, c_range, masterdata, order
 
     return matrix, features4max, c4max, matrix.max()
 
-def create_folds(k, algorithm, orderedIDs, authormatches):
+def create_folds(k, orderedIDs, authormatches, classdictionary):
     '''
     Does k-fold crossvalidation. Returns a list of "folds," which will
     be a list of lists [ [], [], [], etc. ],
@@ -574,21 +575,83 @@ def create_folds(k, algorithm, orderedIDs, authormatches):
     folds = [[] for x in range(k)]
     # e.g. k == 10 will produce: [[], [], [], [], [], [], [], [], [], []]
 
+    assignedinclass = dict()
+    assignedinclass[0] = [0 for x in range(k)]
+    assignedinclass[1] = [0 for x in range(k)]
+
+    # we make an effort to keep the classes balanced across folds
+
+
     ids_to_distribute = set(orderedIDs)
     nextbin = 0
 
-    for i, anid in enumerate(orderedIDs):
+    randomizedtuples = list(zip(list(range(len(orderedIDs))), orderedIDs))
+    random.shuffle(randomizedtuples)
+
+    for i, anid in randomizedtuples:
         if anid in ids_to_distribute:
+            classlabel = classdictionary[anid]
+            thisclasscounts = assignedinclass[classlabel]
+            ascending = sorted(thisclasscounts)
+            whichlowest = thisclasscounts.index(ascending[0])
+
+            nextbin = whichlowest
+
             folds[nextbin].append((i, anid))
+            assignedinclass[classlabel][nextbin] += 1
             ids_to_distribute.remove(anid)
-            for anotherid in authormatches[i]:
+
+            for anotheridx in authormatches[i]:
+                if anotheridx == i:
+                    continue
+                    # for some reason I've made everything a member
+                    # of its own authormatch list
+
+                anotherid = orderedIDs[anotheridx]
+                folds[nextbin].append((anotheridx, anotherid))
+                classlabel = classdictionary[anotherid]
+                assignedinclass[classlabel][nextbin] += 1
+
                 if anotherid in ids_to_distribute:
-                    anotheridx = orderedIDs.index(anotherid)
-                    folds[nextbin].append((anotheridx, anotherid))
                     ids_to_distribute.remove(anotherid)
-            nextbin += 1
-            if nextbin >= k:
-                nextbin = 0
+                    # but notice, we assign anotherid even if it has already
+                    # been assigned elsewhere; all the donottrain volumes
+                    # need to be in all folds
+
+    print(assignedinclass[0])
+    print(assignedinclass[1])
+
+    return folds
+
+def leave_one_out_folds(orderedIDs, authormatches, classdictionary):
+    '''
+    Makes folds for leave-one-out crossvalidation.
+    '''
+
+    folds = []
+    alreadyassigned = set()
+
+    # our strategy is to create folds only if they contain an index
+    # not already assigned
+
+    for matchlist in authormatches:
+        allassigned = True
+        for idx in matchlist:
+            if idx not in alreadyassigned:
+                allassigned = False
+
+        if not allassigned:
+            afold = [(x, orderedIDs[x]) for x in matchlist]
+            folds.append(afold)
+            for item in matchlist:
+                alreadyassigned.add(item)
+
+    # confirm we got everything
+
+    print([len(x) for x in folds])
+    print(len(folds))
+
+    assert alreadyassigned == set(range(len(orderedIDs)))
 
     return folds
 
@@ -677,7 +740,14 @@ def get_data_for_model(paths, exclusions, classifyconditions):
 
     # Get a list of files.
     allthefiles = os.listdir(sourcefolder)
+
+    # RANDOMNESS.
+
     # random.shuffle(allthefiles)
+
+    # RANDOMNESS. This is an important line. Without it, you'd get the same sequence of
+    # orderedIDs each time, and the same distribution of IDs into folds of the cross-
+    # validation
 
     volumeIDs = list()
     volumepaths = list()
@@ -730,12 +800,12 @@ def get_data_for_model(paths, exclusions, classifyconditions):
     # Get a count of docfrequency for all words in the corpus. This is probably not needed and
     # might be deprecated later.
 
-    wordcounts = get_docfrequency(volspresent, donttrainset)
+    # wordcounts = get_docfrequency(volspresent, donttrainset)
 
     # The feature list we use is defined by the top 10,000 words (by document
     # frequency) in the whole corpus, and it will be the same for all models.
 
-    vocablist = get_vocablist(vocabpath, volspresent, wordcounts, useall = True, n = numfeatures)
+    vocablist = get_vocablist(vocabpath, volspresent, useall = True, n = numfeatures)
 
     # This function either gets the vocabulary list already stored in vocabpath, or
     # creates a list of the top 10k words in all files, and stores it there.
@@ -951,7 +1021,19 @@ def tune_a_model(paths, exclusions, classifyconditions, modelparams):
     algorithm, k, featurestart, featureend, featurestep, crange = modelparams
     positive_tags, negative_tags, datetype, numfeatures, regularization, testconditions = classifyconditions
 
-    folds = create_folds(k, algorithm, orderedIDs, authormatches)
+    print(len(orderedIDs))
+    print('compare')
+    all = []
+    for item in authormatches:
+        all.extend(item)
+    print(len(set(all)))
+
+    # to request leave-one-out crossvalidation, set k to zero
+    if k < 1:
+        folds = leave_one_out_folds(orderedIDs, authormatches, classdictionary)
+    else:
+        folds = create_folds(k, orderedIDs, authormatches, classdictionary)
+
 
     matrix, features4max, best_regularization_coef, maxaccuracy = gridsearch(featurestart, featureend, featurestep, crange, masterdata, orderedIDs, folds, algorithm, classdictionary, classvector, donttrainset)
 
@@ -1083,12 +1165,12 @@ if __name__ == '__main__':
     sourcefolder = '/Users/tunder/Dropbox/GenreProject/python/reception/fiction/fromEF'
     extension = '.tsv'
     metadatapath = '/Users/tunder/Dropbox/GenreProject/python/reception/fiction/snootymeta.csv'
-    vocabpath = '/Users/tunder/Dropbox/GenreProject/python/reception/fiction/lexica/snootylexicon.txt'
+    vocabpath = '/Users/tunder/Dropbox/GenreProject/python/reception/fiction/lexica/snootyreviews.txt'
 
     ## modelname = input('Name of model? ')
-    modelname = 'second'
+    modelname = 'snootyreviews1850-1950'
 
-    outputpath = '/Users/tunder/Dropbox/GenreProject/python/reception/fiction/results/' + modelname + str(datetime.date.today()) + '.csv'
+    outputpath = '/Users/tunder/Dropbox/GenreProject/python/reception/fiction/results/' + modelname + '.csv'
 
     # We can simply exclude volumes from consideration on the basis on any
     # metadata category we want, using the dictionaries defined below.
@@ -1113,7 +1195,7 @@ if __name__ == '__main__':
     # allstewgenres = {'cozy', 'hardboiled', 'det100', 'chimyst', 'locdetective', 'lockandkey', 'crime', 'locdetmyst', 'blcrime', 'anatscifi', 'locscifi', 'chiscifi', 'femscifi', 'stangothic', 'pbgothic', 'lochorror', 'chihorror', 'locghost'}
     # excludeif['negatives'] = allstewgenres
 
-    sizecap = 200
+    sizecap = 600
 
     # CLASSIFY CONDITIONS
 
@@ -1149,16 +1231,21 @@ if __name__ == '__main__':
     testconditions = set([x.strip() for x in testphrase.split(',') if len(x) > 0])
 
     datetype = "firstpub"
-    numfeatures = 5000
+    numfeatures = 6000
     regularization = .000075
+    # "regularization" has become a dummy parameter, superseded by modelparams below
+    # numfeatures, likewise, now only sets the ceiling for gridsearch
 
     paths = (sourcefolder, extension, metadatapath, outputpath, vocabpath)
     exclusions = (excludeif, excludeifnot, excludebelow, excludeabove, sizecap)
     classifyconditions = (positive_tags, negative_tags, datetype, numfeatures, regularization, testconditions)
 
-    c_range = [.00008, .0001, .00012, .00013, .00014, .00016]
+    c_range = [.00005, .0001, .0003, .0006, .001, .002, .004, .01, .1, 1]
 
-    modelparams = 'svm', 10, 3700, 3800, 40, c_range
+    # c_range = [.001, .002, .004, .01, .1, 1, 3, 6, 9, 12]
+
+    modelparams = 'logistic', 24, 3000, 6000, 200, c_range
+    # this is algorithm, k-fold crossvalidation, ftstart, ftend, ftstep, range for C
 
     matrix, rawaccuracy, allvolumes, coefficientuples = tune_a_model(paths, exclusions, classifyconditions, modelparams)
 
