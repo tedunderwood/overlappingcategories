@@ -57,6 +57,30 @@ def get_metadata(classpath, volumeIDs, excludeif, excludeifnot, excludebelow, ex
             taglist = tagstring.split('|')
             tagset = set([x.strip() for x in taglist])
 
+            nation = row['nationality'].rstrip()
+
+            if nation == 'ca':
+                nation = 'us'
+            elif nation == 'ir':
+                nation = 'uk'
+            # I hope none of my Canadian or Irish friends notice this.
+
+            author = row['author'].strip()
+            if len(author) < 1 or author == '<blank>':
+                author = "anonymous" + str(anonctr)
+                anonctr += 1
+
+            intfirstpub = forceint(row['firstpub'])
+            intdate = forceint(row['date'])
+
+            if intfirstpub < 1000 and intdate > 1000:
+                row['firstpub'] = intdate
+            else:
+                row['firstpub'] = intfirstpub
+
+            # we may not have first publication information for all volumes
+            # in cases where we don't, use publication date
+
             bail = False
             for key, value in excludeif.items():
                 if key == 'negatives':
@@ -78,35 +102,16 @@ def get_metadata(classpath, volumeIDs, excludeif, excludeifnot, excludebelow, ex
             if bail:
                 continue
 
-            nation = row['nationality'].rstrip()
-
-            if nation == 'ca':
-                nation = 'us'
-            elif nation == 'ir':
-                nation = 'uk'
-            # I hope none of my Canadian or Irish friends notice this.
-
-            author = row['author'].strip()
-            if len(author) < 1 or author == '<blank>':
-                author = "anonymous" + str(anonctr)
-                anonctr += 1
-
             metadict[volid] = dict()
             metadict[volid]['docid'] = volid
-            metadict[volid]['pubdate'] = forceint(row['date'])
+            metadict[volid]['pubdate'] = intdate
             metadict[volid]['birthdate'] = forceint(row['birthdate'])
             metadict[volid]['gender'] = row['gender'].rstrip()
             metadict[volid]['nation'] = nation
             metadict[volid]['author'] = author
             metadict[volid]['title'] = row['title']
             metadict[volid]['tagset'] = tagset
-            metadict[volid]['firstpub'] = forceint(row['firstpub'])
-
-            if metadict[volid]['firstpub'] == 0 and metadict[volid]['pubdate'] > 0:
-                metadict[volid]['firstpub'] = metadict[volid]['pubdate']
-
-                # we may not have first publication information for all volumes
-                # in cases where we don't, use publication date
+            metadict[volid]['firstpub'] = row['firstpub']
 
     # We only return metadata entries for volumes that are also
     # in the list of volumeIDs -- ultimately extracted from the
