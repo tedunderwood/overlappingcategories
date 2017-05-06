@@ -111,11 +111,13 @@ def model_volume_list(data5tuple):
     data, classvector, idstomodel, indicestomodel, regularization = data5tuple
     trainingset, yvals, testset = sliceframe_list(data, classvector, indicestomodel)
     newmodel = LogisticRegression(C = regularization)
-    trainingset, means, stdevs = normalizearray(trainingset, False)
-    newmodel.fit(trainingset, yvals)
+    stdscaler = StandardScaler()
+    stdscaler.fit(trainingset)
+    scaledtraining = stdscaler.transform(trainingset)
+    newmodel.fit(scaledtraining, yvals)
 
-    testset = (testset - means) / stdevs
-    predictions = [x[1] for x in newmodel.predict_proba(testset)]
+    scaledtest = stdscaler.transform(testset)
+    predictions = [x[1] for x in newmodel.predict_proba(scaledtest)]
 
     return predictions
 

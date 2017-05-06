@@ -137,6 +137,11 @@ usedate = False
 # There are three different date types we can use.
 # Choose which here.
 
+includespecialfeatures = True
+
+# this allows punctuation marks, bigrams, and
+# statistical metrics to function as features
+
 # FUNCTIONS GET DEFINED BELOW.
 
 def get_features(wordcounts, wordlist):
@@ -325,6 +330,8 @@ def make_vocablist(volspresent, n, vocabpath):
     to vocabpath.
     '''
 
+    global includespecialfeatures
+
     sourcepaths = [x[1] for x in volspresent]
     # volspresent is a list of id, path 2-tuples created by get_volume_lists
 
@@ -339,8 +346,7 @@ def make_vocablist(volspresent, n, vocabpath):
                     continue
                 if fields[1] != 'frequency':
                     word = fields[0]
-                    if len(word) > 0 and word[0].isalpha():
-                        count = float(fields[1])
+                    if len(word) > 0 and not word.startswith('#bi_'):
                         wordcounts[word] += 1
 
     with open(vocabpath, mode = 'w', encoding = 'utf-8') as f:
