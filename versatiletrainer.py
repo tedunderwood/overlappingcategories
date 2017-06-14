@@ -134,9 +134,6 @@ usedate = False
 # surgery to reactivate the currently-deprecated
 # option to use "date" as a predictive feature.
 
-# There are three different date types we can use.
-# Choose which here.
-
 includespecialfeatures = True
 
 # this allows punctuation marks, bigrams, and

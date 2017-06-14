@@ -53,7 +53,7 @@ def get_metadata(classpath, volumeIDs, excludeif, excludeifnot, excludebelow, ex
             volid = row['docid']
             allidsinmeta.add(volid)
 
-            tagstring = row['genretags'].strip()
+            tagstring = row['tags'].strip()
             taglist = tagstring.split('|')
             tagset = set([x.strip() for x in taglist])
 
@@ -71,7 +71,13 @@ def get_metadata(classpath, volumeIDs, excludeif, excludeifnot, excludebelow, ex
                 anonctr += 1
 
             intfirstpub = forceint(row['firstpub'])
-            intdate = forceint(row['date'])
+            if 'date' in row:
+                intdate = forceint(row['date'])
+            elif 'earliestdate' in row:
+                intdate = forceint(row['earliestdate'])
+            else:
+                intdate = 0
+                print('metadata error lacking earliestdate')
 
             if intfirstpub < 1000 and intdate > 1000:
                 row['firstpub'] = intdate

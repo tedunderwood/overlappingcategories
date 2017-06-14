@@ -10,21 +10,17 @@
 import sys
 
 def infer_date(metadictentry, datetype):
-    if datetype == 'pubdate':
-        return metadictentry[datetype]
-    elif datetype == 'firstpub':
+    if datetype == 'firstpub':
         firstpub = metadictentry['firstpub']
         if firstpub > 1700 and firstpub < 2500:
             return firstpub
         else:
             return metadictentry['pubdate']
+    elif datetype in metadictentry:
+        return metadictentry[datetype]
     else:
-        print('Unsupported date type.')
-        if datetype in metadictentry:
-            return metadictentry[datetype]
-        else:
-            print('Fatal error in date type.')
-            sys.exit(0)
+        print('Fatal error in date type.')
+        sys.exit(0)
 
 def appendif(key, value, dictionary):
     if key in dictionary:
