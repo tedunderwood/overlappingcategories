@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-# experiment.py
+# methodological_experiment.py
 
-import sys, os
+import sys, os, csv
 import numpy as np
 import pandas as pd
 import versatiletrainer2
@@ -156,12 +156,13 @@ def vary_sf_ratio_against_random():
             c_range = [.00005, .0003, .001, .004, .012, 0.2, 0.8]
             featurestart = 1000
             featureend = 6000
-            featurestep = 200
-            modelparams = 'logistic', 20, featurestart, featureend, featurestep, c_range
-            tags4positive = size
-            tags4negative = ratio
+            featurestep = 300
+            modelparams = 'logistic', 16, featurestart, featureend, featurestep, c_range
 
-            matrix, maxaccuracy, metadata, coefficientuples, features4max, best_regularization_coef = versatiletrainer2.tune_a_model(metadata, masterdata, classvector, classdictionary, orderedIDs, authormatches, vocablist, tags4positive, tags4negative, modelparams, name, '../measuredivergence/modeloutput/' + name + '.csv', write_fullmodel = True)
+            matrix, maxaccuracy, metadata, coefficientuples, features4max, best_regularization_coef = versatiletrainer2.tune_a_model(metadata, masterdata, classvector, classdictionary, orderedIDs, authormatches, vocablist, tags4positive, tags4negative, modelparams, name, '../measuredivergence/modeloutput/' + name + '.csv', write_fullmodel = False)
+            # It's important not to write fullmodel if you want the csvs
+            # to accurately reflect terrible accuracy on diluted datasets.
+            # write_fullmodel = False forces crossvalidation.
 
             with open('../measuredivergence/modeldata.tsv', mode = 'a', encoding = 'utf-8') as f:
                 outline = name + '\t' + str(size) + '\t' + str(ratio) + '\t' + str(maxaccuracy) + '\t' + str(features4max) + '\t' + str(best_regularization_coef) + '\n'
@@ -193,13 +194,49 @@ def vary_fantasy_ratio_against_sf():
 
             c_range = [.00005, .0003, .001, .004, .012, 0.2, 0.8, 3]
             featurestart = 2000
-            featureend = 8000
-            featurestep = 200
-            modelparams = 'logistic', 12, featurestart, featureend, featurestep, c_range
-            tags4positive = size
-            tags4negative = ratio
+            featureend = 7500
+            featurestep = 400
+            modelparams = 'logistic', 16, featurestart, featureend, featurestep, c_range
 
-            matrix, maxaccuracy, metadata, coefficientuples, features4max, best_regularization_coef = versatiletrainer2.tune_a_model(metadata, masterdata, classvector, classdictionary, orderedIDs, authormatches, vocablist, tags4positive, tags4negative, modelparams, name, '../measuredivergence/modeloutput/' + name + '.csv', write_fullmodel = True)
+            matrix, maxaccuracy, metadata, coefficientuples, features4max, best_regularization_coef = versatiletrainer2.tune_a_model(metadata, masterdata, classvector, classdictionary, orderedIDs, authormatches, vocablist, tags4positive, tags4negative, modelparams, name, '../measuredivergence/modeloutput/' + name + '.csv', write_fullmodel = False)
+            # write_fullmodel = False forces crossvalidation.
+
+            with open('../measuredivergence/modeldata.tsv', mode = 'a', encoding = 'utf-8') as f:
+                outline = name + '\t' + str(size) + '\t' + str(ratio) + '\t' + str(maxaccuracy) + '\t' + str(features4max) + '\t' + str(best_regularization_coef) + '\n'
+                f.write(outline)
+
+def vary_fantasy_ratio_against_random():
+    if not os.path.isfile('../measuredivergence/modeldata.tsv'):
+        with open('../measuredivergence/modeldata.tsv', mode = 'w', encoding = 'utf-8') as f:
+            outline = 'name\tsize\tratio\taccuracy\tfeatures\tregularization\n'
+            f.write(outline)
+
+    size = 80
+
+    for iteration in [11, 12, 13]:
+
+        ceiling = 105
+        if iteration == 13:
+            ceiling = 5
+
+        for pct in range(0, ceiling, 5):
+            ratio = pct / 100
+            name = 'iter' + str(iteration) + '_size' + str(size) + '_ratio' + str(pct)
+
+            vocabpath = '../measuredivergence/vocabularies/' + name + '.txt'
+            tags4positive = {'fantasy_loc', 'fantasy_oclc'}
+            tags4negative = {'random'}
+
+            metadata, masterdata, classvector, classdictionary, orderedIDs, authormatches, vocablist = get_ratio_data(vocabpath, size, ratio, tags4positive, tags4negative, excludebelow = 0, excludeabove = 3000)
+
+            c_range = [.00005, .0003, .001, .004, .012, 0.2, 0.8, 3]
+            featurestart = 1600
+            featureend = 6400
+            featurestep = 400
+            modelparams = 'logistic', 16, featurestart, featureend, featurestep, c_range
+
+            matrix, maxaccuracy, metadata, coefficientuples, features4max, best_regularization_coef = versatiletrainer2.tune_a_model(metadata, masterdata, classvector, classdictionary, orderedIDs, authormatches, vocablist, tags4positive, tags4negative, modelparams, name, '../measuredivergence/modeloutput/' + name + '.csv', write_fullmodel = False)
+            # write_fullmodel = False forces crossvalidation.
 
             with open('../measuredivergence/modeldata.tsv', mode = 'a', encoding = 'utf-8') as f:
                 outline = name + '\t' + str(size) + '\t' + str(ratio) + '\t' + str(maxaccuracy) + '\t' + str(features4max) + '\t' + str(best_regularization_coef) + '\n'
@@ -271,7 +308,7 @@ def get_divergences(gold, testname, itera, size, pct):
 
     spearman1on2 = stats.spearmanr(model1on2.probability, model1on2.alien_model)[0]
     spearman2on1 = stats.spearmanr(model2on1.probability, model2on1.alien_model)[0]
-    spearman = averagecorr(pearson1on2, pearson2on1)
+    spearman = averagecorr(spearman1on2, spearman2on1)
 
     loss1on2 = accuracy_loss(model1on2)
     loss2on1 = accuracy_loss(model2on1)
@@ -281,13 +318,16 @@ def get_divergences(gold, testname, itera, size, pct):
     kl2on1 = kldivergence(model2on1.probability, model2on1.alien_model)
     kl = (kl1on2 + kl2on1) / 2
 
-    return pearson, spearman, loss, kl, spearman2on1
+    return pearson, spearman, loss, kl, spearman1on2, spearman2on1, loss1on2, loss2on1
 
 def measure_sf_divergences():
-    if not os.path.isfile('../measuredivergence/divergences.tsv'):
-        with open('../measuredivergence/divergences.tsv', mode = 'a', encoding = 'utf-8') as f:
-            outline = 'name1\tname2\tsize1\tsize2\tacc1\tacc2\tratiodiff\tpearson\tspearman\tspearman2on1\tloss\tkl\n'
-            f.write(outline)
+
+    columns = ['name1', 'name2', 'size', 'acc1', 'acc2', 'ratiodiff', 'pearson', 'spearman', 'spear1on2', 'spear2on1', 'loss', 'loss1on2', 'loss2on1', 'kl']
+
+    if not os.path.isfile('../measuredivergence/sf_divergences.tsv'):
+        with open('../measuredivergence/sf_divergences.tsv', mode = 'a', encoding = 'utf-8') as f:
+            scribe = csv.DictWriter(f, delimiter = '\t', fieldnames = columns)
+            scribe.writeheader()
 
     goldstandards = ['iter5_size80_ratio0', 'iter6_size80_ratio0', 'iter7_size80_ratio0']
     size = 80
@@ -305,20 +345,28 @@ def measure_sf_divergences():
                     continue
                     # we don't test a model against itself
                 else:
-                    pearson, spearman, loss, kl, spearman2on1 = get_divergences(gold, testname, itera, size, pct)
+                    row = dict()
+                    row['pearson'], row['spearman'], row['loss'], row['kl'], row['spear1on2'], row['spear2on1'], row['loss1on2'], row['loss2on1'] = get_divergences(gold, testname, itera, size, pct)
 
-                acc1 = modeldata.loc[gold, 'accuracy']
-                acc2 = modeldata.loc[testname, 'accuracy']
+                row['name1'] = gold
+                row['name2'] = testname
+                row['size'] = size
+                row['acc1'] = modeldata.loc[gold, 'accuracy']
+                row['acc2'] = modeldata.loc[testname, 'accuracy']
+                row['ratiodiff'] = ratio
 
-                with open('../measuredivergence/divergences.tsv', mode = 'a', encoding = 'utf-8') as f:
-                    outline = gold + '\t' + testname + '\t' +str(size) + '\t' + str(size) + '\t' + str(acc1) + '\t' + str(acc2) + '\t' + str(ratio) + '\t' + str(pearson) + '\t' + str(spearman) + '\t' + str(spearman2on1) + '\t' + str(loss) + '\t' + str(kl) + '\n'
-                    f.write(outline)
+                with open('../measuredivergence/sf_divergences.tsv', mode = 'a', encoding = 'utf-8') as f:
+                    scribe = csv.DictWriter(f, delimiter = '\t', fieldnames = columns)
+                    scribe.writerow(row)
 
-def measure_fantasy_divergence_from_sf():
+def measure_fsf_divergences():
+
+    columns = ['name1', 'name2', 'size', 'acc1', 'acc2', 'ratiodiff', 'pearson', 'spearman', 'spear1on2', 'spear2on1', 'loss', 'loss1on2', 'loss2on1', 'kl']
+
     if not os.path.isfile('../measuredivergence/fsf_divergences.tsv'):
         with open('../measuredivergence/fsf_divergences.tsv', mode = 'a', encoding = 'utf-8') as f:
-            outline = 'name1\tname2\tsize1\tsize2\tacc1\tacc2\tratiodiff\tpearson\tspearman\tspearman2on1\tloss\tkl\n'
-            f.write(outline)
+            scribe = csv.DictWriter(f, delimiter = '\t', fieldnames = columns)
+            scribe.writeheader()
 
     goldstandards = ['iter8_size80_ratio0', 'iter9_size80_ratio0', 'iter10_size80_ratio0']
     size = 80
@@ -336,16 +384,60 @@ def measure_fantasy_divergence_from_sf():
                     continue
                     # we don't test a model against itself
                 else:
-                    pearson, spearman, loss, kl, spearman2on1 = get_divergences(gold, testname, itera, size, pct)
+                    row = dict()
+                    row['pearson'], row['spearman'], row['loss'], row['kl'], row['spear1on2'], row['spear2on1'], row['loss1on2'], row['loss2on1'] = get_divergences(gold, testname, itera, size, pct)
 
-                acc1 = modeldata.loc[gold, 'accuracy']
-                acc2 = modeldata.loc[testname, 'accuracy']
+                row['name1'] = gold
+                row['name2'] = testname
+                row['size'] = size
+                row['acc1'] = modeldata.loc[gold, 'accuracy']
+                row['acc2'] = modeldata.loc[testname, 'accuracy']
+                row['ratiodiff'] = ratio
 
                 with open('../measuredivergence/fsf_divergences.tsv', mode = 'a', encoding = 'utf-8') as f:
-                    outline = gold + '\t' + testname + '\t' +str(size) + '\t' + str(size) + '\t' + str(acc1) + '\t' + str(acc2) + '\t' + str(ratio) + '\t' + str(pearson) + '\t' + str(spearman) + '\t' + str(spearman2on1) + '\t' + str(loss) + '\t' + str(kl) + '\n'
-                    f.write(outline)
+                    scribe = csv.DictWriter(f, delimiter = '\t', fieldnames = columns)
+                    scribe.writerow(row)
 
-measure_fantasy_divergence_from_sf()
+def measure_fantasy_divergences():
+
+    columns = ['name1', 'name2', 'size', 'acc1', 'acc2', 'ratiodiff', 'pearson', 'spearman', 'spear1on2', 'spear2on1', 'loss', 'loss1on2', 'loss2on1', 'kl']
+
+    if not os.path.isfile('../measuredivergence/fantasy_divergences.tsv'):
+        with open('../measuredivergence/fantasy_divergences.tsv', mode = 'a', encoding = 'utf-8') as f:
+            scribe = csv.DictWriter(f, delimiter = '\t', fieldnames = columns)
+            scribe.writeheader()
+
+    goldstandards = ['iter11_size80_ratio0', 'iter12_size80_ratio0', 'iter13_size80_ratio0']
+    size = 80
+
+    modeldata = pd.read_csv('../measuredivergence/modeldata.tsv', sep = '\t', index_col = 'name')
+
+    for gold in goldstandards:
+        for itera in [11, 12]:
+            for pct in range(0, 105, 5):
+                ratio = pct / 100
+
+                testname = 'iter' + str(itera) + '_size' + str(size) + '_ratio' + str(pct)
+
+                if testname == gold:
+                    continue
+                    # we don't test a model against itself
+                else:
+                    row = dict()
+                    row['pearson'], row['spearman'], row['loss'], row['kl'], row['spear1on2'], row['spear2on1'], row['loss1on2'], row['loss2on1'] = get_divergences(gold, testname, itera, size, pct)
+
+                row['name1'] = gold
+                row['name2'] = testname
+                row['size'] = size
+                row['acc1'] = modeldata.loc[gold, 'accuracy']
+                row['acc2'] = modeldata.loc[testname, 'accuracy']
+                row['ratiodiff'] = ratio
+
+                with open('../measuredivergence/fantasy_divergences.tsv', mode = 'a', encoding = 'utf-8') as f:
+                    scribe = csv.DictWriter(f, delimiter = '\t', fieldnames = columns)
+                    scribe.writerow(row)
+
+measure_fantasy_divergences()
 
 
 
