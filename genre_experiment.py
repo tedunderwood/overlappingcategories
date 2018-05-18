@@ -25,6 +25,31 @@ def foldintodict(d1, d2):
     for k, v in d1.items():
         add2dict(d2, k, v)
 
+def accuracy(df, column):
+    totalcount = len(df.realclass)
+    tp = sum((df.realclass > 0.5) & (df[column] > 0.5))
+    tn = sum((df.realclass <= 0.5) & (df[column] <= 0.5))
+    fp = sum((df.realclass <= 0.5) & (df[column] > 0.5))
+    fn = sum((df.realclass > 0.5) & (df[column] <= 0.5))
+    assert totalcount == (tp + fp + tn + fn)
+
+    return (tp + tn) / totalcount
+
+def accuracy_loss(df):
+
+    return accuracy(df, 'probability') - accuracy(df, 'alien_model')
+
+def averagecorr(r1, r2):
+    z1 = np.arctanh(r1)
+    z2 = np.arctanh(r2)
+    themean = (z1 + z2) / 2
+    return np.tanh(themean)
+
+def write_a_row(r, outfile, columns):
+    with open(outfile, mode = 'a', encoding = 'utf-8') as f:
+        scribe = csv.DictWriter(f, fieldnames = columns, delimiter = '\t')
+        scribe.writerow(r)
+
 def reliable_genre_comparisons():
 
     '''
@@ -143,31 +168,68 @@ def reliable_genre_comparisons():
             r['spearman'], r['loss'], r['spear1on2'], r['spear2on1'], r['loss1on2'], r['loss2on1'], r['acc1'], r['acc2'], r['alienacc1'], r['alienacc2'], r['meandate1'], r['meandate2'] = get_divergence(r['name1'], r['name2'])
             write_a_row(r, outcomparisons, columns)
 
+def compress(aname):
+    aname = aname.replace(':', '')
+    aname = aname.replace(' ', '')
+    aname = aname.replace(',', '')
+    return aname
 
-def compare_cross_models():
+def create_comparison_assignments():
+
+    genrenamedf = pd.read_csv('../metadata/selected_genres.tsv', sep = '\t')
+    primary_genres = genrenamedf.loc[genrenamedf.genretype == 'primary', 'genre'].tolist()
+    b_genres = set(genrenamedf.loc[genrenamedf.genretype == 'B genre', 'genre'].tolist())
+
+    intersection_genres = set(genrenamedf.loc[genrenamedf.genretype == 'intersection', 'genre'].tolist())
+
+    assignments = []
+    for idx, g1 in enumerate(primary_genres):
+        for g2 in primary_genres[idx + 1: ]:
+            if g1.startswith('random') or g2.startswith('random'):
+                continue
+            else:
+                assignments.append((g1, g2))
+
+    for floor in range(0, len(assignments), 128):
+        with open('comparison' + str(floor) + '.tsv', mode = 'w', encoding = 'utf-8') as f:
+            for g1, g2 in assignments[floor: floor + 128]:
+                f.write(g1 + '\t' + g2 + '\n')
+
+def compare_cross_models(assignment_file):
     '''
     Function used in the genredistance project.
     The function assumes that you've already trained the crossmodels,
     and now just need to compare them.
     '''
 
-    files = [x for x in os.listdir('../models') if x.endswith('.pkl')]
-    allgenres = list(set([x.split('_')[0] for x in files]))
-    print(allgenres)
+    assignments = []
+    with open(assignment_file, encoding = 'utf-8') as f:
+        for line in f:
+            row = line.strip().split('\t')
+            assignments.append((row[0], row[1]))
+
+    modelfiles = [x for x in os.listdir('../models') if x.endswith('.pkl')]
+
+    genrenamedf = pd.read_csv('../metadata/selected_genres.tsv', sep = '\t')
+    primary_genres = genrenamedf.loc[genrenamedf.genretype == 'primary', 'genre'].tolist()
+    b_genres = set(genrenamedf.loc[genrenamedf.genretype == 'B genre', 'genre'].tolist())
+
+    intersection_genres = set(genrenamedf.loc[genrenamedf.genretype == 'intersection', 'genre'].tolist())
+
     outcomparisons = '../results/crosscomparisons.tsv'
-
-    alreadydone = set()
-    with open(outcomparisons, encoding = 'utf-8') as f:
-        reader = csv.DictReader(f, delimiter = '\t')
-        for row in reader:
-            g1 = row['name1'].split('_')[0]
-            g2 = row['name2'].split('_')[0]
-            alreadydone.add((g1, g2))
-            alreadydone.add((g2, g1))
-
     columns = ['testype', 'name1', 'name2', 'ceiling1', 'floor1', 'ceiling2', 'floor2', 'meandate1', 'meandate2', 'acc1', 'acc2', 'alienacc1', 'alienacc2', 'spearman', 'spear1on2', 'spear2on1', 'loss', 'loss1on2', 'loss2on1']
 
-    if not os.path.isfile(outcomparisons):
+    alreadydone = set()
+    if os.path.isfile(outcomparisons):
+        with open(outcomparisons, encoding = 'utf-8') as f:
+            reader = csv.DictReader(f, delimiter = '\t')
+            for row in reader:
+                g1 = row['name1'].split('_')[0]
+                g2 = row['name2'].split('_')[0]
+                alreadydone.add((g1, g2))
+                alreadydone.add((g2, g1))
+
+    else:
         with open(outcomparisons, mode = 'a', encoding = 'utf-8') as f:
             scribe = csv.DictWriter(f, delimiter = '\t', fieldnames = columns)
             scribe.writeheader()
@@ -175,56 +237,81 @@ def compare_cross_models():
     ranA = '_randomA'
     ranB = '_randomB'
 
-    for idx, g1 in enumerate(allgenres):
-        for g2 in allgenres[idx + 1: ]:
-            if g1 == g2:
-                continue
-            elif g1.startswith('random') or g2.startswith('random'):
-                continue
-            elif (g1, g2) in alreadydone:
-                print((g1, g2))
-                continue
+    for g1, g2 in assignments:
+
+        if g1.startswith('random') or g2.startswith('random'):
+            continue
+
+        elif g1 == g2:
+            bversion = g1 + ' B'
+            if bversion in b_genres:
+                g2 = bversion
             else:
+                continue
 
-                r = dict()
-                name1 = g1 + ranA
-                name2 = g2 + ranB
-                r['name1'] = name1
-                r['name2'] = name2
-                r['testype'] = 'crossAB'
-                r['spearman'], r['loss'], r['spear1on2'], r['spear2on1'], r['loss1on2'], r['loss2on1'], r['acc1'], r['acc2'], r['alienacc1'], r['alienacc2'], r['meandate1'], r['meandate2'] = get_divergence(r['name1'], r['name2'])
+        elif (g1, g2) in alreadydone:
+            print('already done:', (g1, g2))
+            continue
 
-                write_a_row(r, outcomparisons, columns)
+        intersect = g1 + '-Not-' + g2
 
-                r = dict()
-                name1 = g1 + ranA
-                name2 = g1 + ranB
-                r['name1'] = name1
-                r['name2'] = name2
-                r['testype'] = 'self1'
-                r['spearman'], r['loss'], r['spear1on2'], r['spear2on1'], r['loss1on2'], r['loss2on1'], r['acc1'], r['acc2'], r['alienacc1'], r['alienacc2'], r['meandate1'], r['meandate2'] = get_divergence(r['name1'], r['name2'])
+        if intersect in intersection_genres:
+            model1 = compress(g1) + '-Not-' + compress(g2)
+            model2 = compress(g2) + '-Not-' + compress(g1)
 
-                write_a_row(r, outcomparisons, columns)
+            file1 = model1 + ranA + '.pkl'
+            if file1 not in modelfiles:
+                print('ERROR ERROR')
+                model1 = compress(g1)
 
-                r = dict()
-                name1 = g1 + ranB
-                name2 = g2 + ranA
-                r['name1'] = name1
-                r['name2'] = name2
-                r['testype'] = 'crossBA'
-                r['spearman'], r['loss'], r['spear1on2'], r['spear2on1'], r['loss1on2'], r['loss2on1'], r['acc1'], r['acc2'], r['alienacc1'], r['alienacc2'], r['meandate1'], r['meandate2'] = get_divergence(r['name1'], r['name2'])
+            file2 = model2 + ranB + '.pkl'
+            if file2 not in modelfiles:
+                print('ERROR ERROR')
+                model2 = compress(g2)
 
-                write_a_row(r, outcomparisons, columns)
+        else:
+            model1 = compress(g1)
+            model2 = compress(g2)
 
-                r = dict()
-                name1 = g2 + ranA
-                name2 = g2 + ranB
-                r['name1'] = name1
-                r['name2'] = name2
-                r['testype'] = 'self2'
-                r['spearman'], r['loss'], r['spear1on2'], r['spear2on1'], r['loss1on2'], r['loss2on1'], r['acc1'], r['acc2'], r['alienacc1'], r['alienacc2'], r['meandate1'], r['meandate2'] = get_divergence(r['name1'], r['name2'])
+        r = dict()
+        name1 = model1 + ranA
+        name2 = model2 + ranB
+        r['name1'] = name1
+        r['name2'] = name2
+        r['testype'] = 'crossAB'
+        r['spearman'], r['loss'], r['spear1on2'], r['spear2on1'], r['loss1on2'], r['loss2on1'], r['acc1'], r['acc2'], r['alienacc1'], r['alienacc2'], r['meandate1'], r['meandate2'] = get_divergence(r['name1'], r['name2'])
 
-                write_a_row(r, outcomparisons, columns)
+        write_a_row(r, outcomparisons, columns)
+
+        r = dict()
+        name1 = model1 + ranA
+        name2 = model1 + ranB
+        r['name1'] = name1
+        r['name2'] = name2
+        r['testype'] = 'self1'
+        r['spearman'], r['loss'], r['spear1on2'], r['spear2on1'], r['loss1on2'], r['loss2on1'], r['acc1'], r['acc2'], r['alienacc1'], r['alienacc2'], r['meandate1'], r['meandate2'] = get_divergence(r['name1'], r['name2'])
+
+        write_a_row(r, outcomparisons, columns)
+
+        r = dict()
+        name1 = model1 + ranB
+        name2 = model2 + ranA
+        r['name1'] = name1
+        r['name2'] = name2
+        r['testype'] = 'crossBA'
+        r['spearman'], r['loss'], r['spear1on2'], r['spear2on1'], r['loss1on2'], r['loss2on1'], r['acc1'], r['acc2'], r['alienacc1'], r['alienacc2'], r['meandate1'], r['meandate2'] = get_divergence(r['name1'], r['name2'])
+
+        write_a_row(r, outcomparisons, columns)
+
+        r = dict()
+        name1 = model2 + ranA
+        name2 = model2 + ranB
+        r['name1'] = name1
+        r['name2'] = name2
+        r['testype'] = 'self2'
+        r['spearman'], r['loss'], r['spear1on2'], r['spear2on1'], r['loss1on2'], r['loss2on1'], r['acc1'], r['acc2'], r['alienacc1'], r['alienacc2'], r['meandate1'], r['meandate2'] = get_divergence(r['name1'], r['name2'])
+
+        write_a_row(r, outcomparisons, columns)
 
 def get_divergence(sampleA, sampleB):
     '''
@@ -516,8 +603,11 @@ command = sys.argv[1]
 
 if command == "crossmodels":
     create_cross_models()
+elif command == "create_comparison_assignments":
+    create_comparison_assignments()
 elif command == "comparecross":
-    compare_cross_models()
+    assignment_file = sys.argv[2]
+    compare_cross_models(assignment_file)
 elif command == 'create_model_assignments':
     create_model_assignments()
 elif command == 'assign':
